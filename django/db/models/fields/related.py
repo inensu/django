@@ -3,7 +3,8 @@ from django.db import connection, router, transaction
 from django.db.backends import util
 from django.db.models import signals, get_model
 from django.db.models.fields import (AutoField, Field, IntegerField,
-    PositiveIntegerField, PositiveSmallIntegerField, FieldDoesNotExist)
+        BigIntegerField, PositiveIntegerField, PositiveSmallIntegerField, 
+        FieldDoesNotExist)
 from django.db.models.related import RelatedObject
 from django.db.models.query import QuerySet
 from django.db.models.query_utils import QueryWrapper
@@ -928,7 +929,7 @@ class ForeignKey(RelatedField, Field):
                 (not connection.features.related_fields_match_type and
                 isinstance(rel_field, (PositiveIntegerField,
                                        PositiveSmallIntegerField)))):
-            return IntegerField().db_type(connection=connection)
+            return BigIntegerField().db_type(connection=connection)
         return rel_field.db_type(connection=connection)
 
 class OneToOneField(ForeignKey):
