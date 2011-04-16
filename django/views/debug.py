@@ -88,21 +88,14 @@ class ExceptionReporter(object):
             self.loader_debug_info = []
             for loader in template_source_loaders:
                 try:
-                    module = import_module(loader.__module__)
-                    if hasattr(loader, '__class__'):
-                        source_list_func = loader.get_template_sources
-                    else: # NOTE: Remember to remove this branch when we deprecate old template loaders in 1.4
-                        source_list_func = module.get_template_sources
+                    source_list_func = loader.get_template_sources
                     # NOTE: This assumes exc_value is the name of the template that
                     # the loader attempted to load.
                     template_list = [{'name': t, 'exists': os.path.exists(t)} \
                         for t in source_list_func(str(self.exc_value))]
-                except (ImportError, AttributeError):
+                except AttributeError:
                     template_list = []
-                if hasattr(loader, '__class__'):
-                    loader_name = loader.__module__ + '.' + loader.__class__.__name__
-                else: # NOTE: Remember to remove this branch when we deprecate old template loaders in 1.4
-                    loader_name = loader.__module__ + '.' + loader.__name__
+                loader_name = loader.__module__ + '.' + loader.__class__.__name__
                 self.loader_debug_info.append({
                     'loader': loader_name,
                     'templates': template_list,
@@ -756,14 +749,15 @@ Exception Value: {{ exception_value|force_escape }}
   </table>
 
 </div>
-
-<div id="explanation">
-  <p>
-    You're seeing this error because you have <code>DEBUG = True</code> in your
-    Django settings file. Change that to <code>False</code>, and Django will
-    display a standard 500 page.
-  </p>
-</div>
+{% if not is_email %}
+  <div id="explanation">
+    <p>
+      You're seeing this error because you have <code>DEBUG = True</code> in your
+      Django settings file. Change that to <code>False</code>, and Django will
+      display a standard 500 page.
+    </p>
+  </div>
+{% endif %}
 </body>
 </html>
 """
