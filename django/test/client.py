@@ -203,9 +203,22 @@ class RequestFactory(object):
         environ.update(request)
         return environ
 
+    def _session(self):
+        """
+        Obtains the current session variables.
+        """
+        if 'django.contrib.sessions' in settings.INSTALLED_APPS:
+            engine = import_module(settings.SESSION_ENGINE)
+            cookie = self.cookies.get(settings.SESSION_COOKIE_NAME, None)
+            if cookie:
+                return engine.SessionStore(cookie.value)
+        return {}
+
     def request(self, **request):
         "Construct a generic request object."
-        return WSGIRequest(self._base_environ(**request))
+        req = WSGIRequest(self._base_environ(**request))
+        req.session = self._session()
+        return req
 
     def _get_path(self, parsed):
         # If there are parameters, add them
