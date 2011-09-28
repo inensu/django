@@ -28,7 +28,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os, sys, time
+import os, sys, time, signal
 
 try:
     import thread
@@ -57,6 +57,8 @@ def code_changed():
     for filename in filter(lambda v: v, map(lambda m: getattr(m, "__file__", None), sys.modules.values())):
         if filename.endswith(".pyc") or filename.endswith(".pyo"):
             filename = filename[:-1]
+        if filename.endswith("$py.class"):
+            filename = filename[:-9] + ".py"
         if not os.path.exists(filename):
             continue # File might be in an egg, so it can't be reloaded.
         stat = os.stat(filename)
@@ -78,7 +80,13 @@ def ensure_echo_on():
             attr_list = termios.tcgetattr(fd)
             if not attr_list[3] & termios.ECHO:
                 attr_list[3] |= termios.ECHO
+                if hasattr(signal, 'SIGTTOU'):
+                    old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                else:
+                    old_handler = None
                 termios.tcsetattr(fd, termios.TCSANOW, attr_list)
+                if old_handler is not None:
+                    signal.signal(signal.SIGTTOU, old_handler)
 
 def reloader_thread():
     ensure_echo_on()

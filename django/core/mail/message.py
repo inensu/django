@@ -2,13 +2,13 @@ import mimetypes
 import os
 import random
 import time
-from email import Charset, Encoders
+from email import charset as Charset, encoders as Encoders
 from email.generator import Generator
-from email.MIMEText import MIMEText
-from email.MIMEMultipart import MIMEMultipart
-from email.MIMEBase import MIMEBase
-from email.Header import Header
-from email.Utils import formatdate, getaddresses, formataddr, parseaddr
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.header import Header
+from email.utils import formatdate, getaddresses, formataddr, parseaddr
 
 from django.conf import settings
 from django.core.mail.utils import DNS_NAME
@@ -21,7 +21,7 @@ except ImportError:
 
 # Don't BASE64-encode UTF-8 messages so that we avoid unwanted attention from
 # some spam filters.
-Charset.add_charset('utf-8', Charset.SHORTEST, Charset.QP, 'utf-8')
+Charset.add_charset('utf-8', Charset.SHORTEST, None, 'utf-8')
 
 # Default MIME type to use on attachments (if it is not explicitly given
 # and cannot be guessed).

@@ -13,7 +13,7 @@ DEBUG = False
 TEMPLATE_DEBUG = False
 
 # Whether the framework should propagate raw exceptions rather than catching
-# them. This is useful under some testing siutations and should never be used
+# them. This is useful under some testing situations and should never be used
 # on a live site.
 DEBUG_PROPAGATE_EXCEPTIONS = False
 
@@ -142,16 +142,6 @@ SERVER_EMAIL = 'root@localhost'
 SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info.
-# Legacy format
-DATABASE_ENGINE = ''           # 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'oracle'.
-DATABASE_NAME = ''             # Or path to database file if using sqlite3.
-DATABASE_USER = ''             # Not used with sqlite3.
-DATABASE_PASSWORD = ''         # Not used with sqlite3.
-DATABASE_HOST = ''             # Set to empty string for localhost. Not used with sqlite3.
-DATABASE_PORT = ''             # Set to empty string for default. Not used with sqlite3.
-DATABASE_OPTIONS = {}          # Set to empty dictionary for default.
-
-# New format
 DATABASES = {
 }
 
@@ -246,9 +236,17 @@ ALLOWED_INCLUDE_ROOTS = ()
 # is an admin.
 ADMIN_FOR = ()
 
-# 404s that may be ignored.
-IGNORABLE_404_STARTS = ('/cgi-bin/', '/_vti_bin', '/_vti_inf')
-IGNORABLE_404_ENDS = ('mail.pl', 'mailform.pl', 'mail.cgi', 'mailform.cgi', 'favicon.ico', '.php')
+# List of compiled regular expression objects representing URLs that need not
+# be reported when SEND_BROKEN_LINK_EMAILS is True. Here are a few examples:
+#    import re
+#    IGNORABLE_404_URLS = (
+#        re.compile(r'^/apple-touch-icon.*\.png$'),
+#        re.compile(r'^/favicon.ico$),
+#        re.compile(r'^/robots.txt$),
+#        re.compile(r'^/phpmyadmin/),
+#        re.compile(r'\.(cgi|php|pl)$'),
+#    )
+IGNORABLE_404_URLS = ()
 
 # A secret key for this particular Django installation. Used in secret-key
 # hashing algorithms. Set this in your settings, or Django will complain
@@ -358,12 +356,15 @@ TIME_INPUT_FORMATS = (
 # * Note that these format strings are different from the ones to display dates
 DATETIME_INPUT_FORMATS = (
     '%Y-%m-%d %H:%M:%S',     # '2006-10-25 14:30:59'
+    '%Y-%m-%d %H:%M:%S.%f',  # '2006-10-25 14:30:59.000200'
     '%Y-%m-%d %H:%M',        # '2006-10-25 14:30'
     '%Y-%m-%d',              # '2006-10-25'
     '%m/%d/%Y %H:%M:%S',     # '10/25/2006 14:30:59'
+    '%m/%d/%Y %H:%M:%S.%f',  # '10/25/2006 14:30:59.000200'
     '%m/%d/%Y %H:%M',        # '10/25/2006 14:30'
     '%m/%d/%Y',              # '10/25/2006'
     '%m/%d/%y %H:%M:%S',     # '10/25/06 14:30:59'
+    '%m/%d/%y %H:%M:%S.%f',  # '10/25/06 14:30:59.000200'
     '%m/%d/%y %H:%M',        # '10/25/06 14:30'
     '%m/%d/%y',              # '10/25/06'
 )
@@ -378,7 +379,7 @@ DECIMAL_SEPARATOR = '.'
 # Boolean that sets whether to add thousand separator when formatting numbers
 USE_THOUSAND_SEPARATOR = False
 
-# Number of digits that will be together, when spliting them by
+# Number of digits that will be together, when splitting them by
 # THOUSAND_SEPARATOR. 0 means no grouping, 3 means splitting by thousands...
 NUMBER_GROUPING = 0
 
@@ -397,6 +398,11 @@ URL_VALIDATOR_USER_AGENT = "Django/%s (http://www.djangoproject.com)" % get_vers
 # The tablespaces to use for each model when not specified otherwise.
 DEFAULT_TABLESPACE = ''
 DEFAULT_INDEX_TABLESPACE = ''
+
+# Default X-Frame-Options header value
+X_FRAME_OPTIONS = 'SAMEORIGIN'
+
+USE_X_FORWARDED_HOST = False
 
 ##############
 # MIDDLEWARE #
@@ -453,22 +459,6 @@ COMMENTS_ALLOW_PROFANITIES = False
 # 'hasNoProfanities' validator. All of these should be in lowercase.
 PROFANITIES_LIST = ()
 
-# The group ID that designates which users are banned.
-# Set to None if you're not using it.
-COMMENTS_BANNED_USERS_GROUP = None
-
-# The group ID that designates which users can moderate comments.
-# Set to None if you're not using it.
-COMMENTS_MODERATORS_GROUP = None
-
-# The group ID that designates the users whose comments should be emailed to MANAGERS.
-# Set to None if you're not using it.
-COMMENTS_SKETCHY_USERS_GROUP = None
-
-# The system will email MANAGERS the first COMMENTS_FIRST_FEW comments by each
-# user. Set this to 0 if you want to disable it.
-COMMENTS_FIRST_FEW = 0
-
 ##################
 # AUTHENTICATION #
 ##################
@@ -484,6 +474,12 @@ LOGIN_REDIRECT_URL = '/accounts/profile/'
 # The number of days a password reset link is valid for
 PASSWORD_RESET_TIMEOUT_DAYS = 3
 
+###########
+# SIGNING #
+###########
+
+SIGNING_BACKEND = 'django.core.signing.TimestampSigner'
+
 ########
 # CSRF #
 ########
@@ -492,15 +488,17 @@ PASSWORD_RESET_TIMEOUT_DAYS = 3
 # rejected by the CSRF middleware.
 CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
 
-# Name and domain for CSRF cookie.
+# Settings for CSRF cookie.
 CSRF_COOKIE_NAME = 'csrftoken'
 CSRF_COOKIE_DOMAIN = None
+CSRF_COOKIE_PATH = '/'
+CSRF_COOKIE_SECURE = False
 
 ############
 # MESSAGES #
 ############
 
-# Class to use as messges backend
+# Class to use as messages backend
 MESSAGE_STORAGE = 'django.contrib.messages.storage.fallback.FallbackStorage'
 
 # Default values of MESSAGE_LEVEL and MESSAGE_TAGS are defined within
@@ -516,12 +514,19 @@ LOGGING_CONFIG = 'django.utils.log.dictConfig'
 # The default logging configuration. This sends an email to
 # the site admins on every HTTP 500 error. All other log
 # records are sent to the bit bucket.
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        }
+    },
     'handlers': {
         'mail_admins': {
             'level': 'ERROR',
+            'filters': ['require_debug_false'],
             'class': 'django.utils.log.AdminEmailHandler'
         }
     },
@@ -534,23 +539,16 @@ LOGGING = {
     }
 }
 
+# Default exception reporter filter class used in case none has been
+# specifically assigned to the HttpRequest instance.
+DEFAULT_EXCEPTION_REPORTER_FILTER = 'django.views.debug.SafeExceptionReporterFilter'
+
 ###########
 # TESTING #
 ###########
 
 # The name of the class to use to run the test suite
 TEST_RUNNER = 'django.test.simple.DjangoTestSuiteRunner'
-
-# The name of the database to use for testing purposes.
-# If None, a name of 'test_' + DATABASE_NAME will be assumed
-TEST_DATABASE_NAME = None
-
-# Strings used to set the character set and collation order for the test
-# database. These values are passed literally to the server, so they are
-# backend-dependent. If None, no special settings are sent (system defaults are
-# used).
-TEST_DATABASE_CHARSET = None
-TEST_DATABASE_COLLATION = None
 
 ############
 # FIXTURES #
@@ -576,8 +574,3 @@ STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 #    'django.contrib.staticfiles.finders.DefaultStorageFinder',
 )
-
-# URL prefix for admin media -- CSS, JavaScript and images.
-# Make sure to use a trailing slash.
-# Examples: "http://foo.com/static/admin/", "/static/admin/".
-ADMIN_MEDIA_PREFIX = '/static/admin/'

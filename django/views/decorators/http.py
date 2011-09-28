@@ -3,7 +3,6 @@ Decorators for views based on HTTP headers.
 """
 
 from calendar import timegm
-from datetime import timedelta
 from functools import wraps
 
 from django.utils.decorators import decorator_from_middleware, available_attrs
@@ -29,6 +28,7 @@ def require_http_methods(request_method_list):
     Note that request methods should be in uppercase.
     """
     def decorator(func):
+        @wraps(func, assigned=available_attrs(func))
         def inner(request, *args, **kwargs):
             if request.method not in request_method_list:
                 logger.warning('Method Not Allowed (%s): %s' % (request.method, request.path),
@@ -39,7 +39,7 @@ def require_http_methods(request_method_list):
                 )
                 return HttpResponseNotAllowed(request_method_list)
             return func(request, *args, **kwargs)
-        return wraps(func, assigned=available_attrs(func))(inner)
+        return inner
     return decorator
 
 require_GET = require_http_methods(["GET"])
@@ -47,6 +47,9 @@ require_GET.__doc__ = "Decorator to require that a view only accept the GET meth
 
 require_POST = require_http_methods(["POST"])
 require_POST.__doc__ = "Decorator to require that a view only accept the POST method."
+
+require_safe = require_http_methods(["GET", "HEAD"])
+require_safe.__doc__ = "Decorator to require that a view only accept safe methods: GET and HEAD."
 
 def condition(etag_func=None, last_modified_func=None):
     """

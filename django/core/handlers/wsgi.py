@@ -1,11 +1,9 @@
-from pprint import pformat
 import sys
 from threading import Lock
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
-import socket
 
 from django import http
 from django.core import signals
@@ -18,10 +16,11 @@ from django.utils.log import getLogger
 logger = getLogger('django.request')
 
 
-# See http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
+# See http://www.iana.org/assignments/http-status-codes
 STATUS_CODE_TEXT = {
     100: 'CONTINUE',
     101: 'SWITCHING PROTOCOLS',
+    102: 'PROCESSING',
     200: 'OK',
     201: 'CREATED',
     202: 'ACCEPTED',
@@ -29,6 +28,9 @@ STATUS_CODE_TEXT = {
     204: 'NO CONTENT',
     205: 'RESET CONTENT',
     206: 'PARTIAL CONTENT',
+    207: 'MULTI-STATUS',
+    208: 'ALREADY REPORTED',
+    226: 'IM USED',
     300: 'MULTIPLE CHOICES',
     301: 'MOVED PERMANENTLY',
     302: 'FOUND',
@@ -55,12 +57,20 @@ STATUS_CODE_TEXT = {
     415: 'UNSUPPORTED MEDIA TYPE',
     416: 'REQUESTED RANGE NOT SATISFIABLE',
     417: 'EXPECTATION FAILED',
+    422: 'UNPROCESSABLE ENTITY',
+    423: 'LOCKED',
+    424: 'FAILED DEPENDENCY',
+    426: 'UPGRADE REQUIRED',
     500: 'INTERNAL SERVER ERROR',
     501: 'NOT IMPLEMENTED',
     502: 'BAD GATEWAY',
     503: 'SERVICE UNAVAILABLE',
     504: 'GATEWAY TIMEOUT',
     505: 'HTTP VERSION NOT SUPPORTED',
+    506: 'VARIANT ALSO NEGOTIATES',
+    507: 'INSUFFICIENT STORAGE',
+    508: 'LOOP DETECTED',
+    510: 'NOT EXTENDED',
 }
 
 class LimitedStream(object):
@@ -135,52 +145,12 @@ class WSGIRequest(http.HttpRequest):
         self.META['SCRIPT_NAME'] = script_name
         self.method = environ['REQUEST_METHOD'].upper()
         self._post_parse_error = False
-        if type(socket._fileobject) is type and isinstance(self.environ['wsgi.input'], socket._fileobject):
-            # Under development server 'wsgi.input' is an instance of
-            # socket._fileobject which hangs indefinitely on reading bytes past
-            # available count. To prevent this it's wrapped in LimitedStream
-            # that doesn't read past Content-Length bytes.
-            #
-            # This is not done for other kinds of inputs (like flup's FastCGI
-            # streams) beacuse they don't suffer from this problem and we can
-            # avoid using another wrapper with its own .read and .readline
-            # implementation.
-            #
-            # The type check is done because for some reason, AppEngine
-            # implements _fileobject as a function, not a class.
-            try:
-                content_length = int(self.environ.get('CONTENT_LENGTH', 0))
-            except (ValueError, TypeError):
-                content_length = 0
-            self._stream = LimitedStream(self.environ['wsgi.input'], content_length)
-        else:
-            self._stream = self.environ['wsgi.input']
+        try:
+            content_length = int(self.environ.get('CONTENT_LENGTH'))
+        except (ValueError, TypeError):
+            content_length = 0
+        self._stream = LimitedStream(self.environ['wsgi.input'], content_length)
         self._read_started = False
-
-    def __repr__(self):
-        # Since this is called as part of error handling, we need to be very
-        # robust against potentially malformed input.
-        try:
-            get = pformat(self.GET)
-        except:
-            get = '<could not parse>'
-        if self._post_parse_error:
-            post = '<could not parse>'
-        else:
-            try:
-                post = pformat(self.POST)
-            except:
-                post = '<could not parse>'
-        try:
-            cookies = pformat(self.COOKIES)
-        except:
-            cookies = '<could not parse>'
-        try:
-            meta = pformat(self.META)
-        except:
-            meta = '<could not parse>'
-        return '<WSGIRequest\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s>' % \
-            (get, post, cookies, meta)
 
     def get_full_path(self):
         # RFC 3986 requires query string arguments to be in the ASCII range.
@@ -265,7 +235,6 @@ class WSGIHandler(base.BaseHandler):
                     exc_info=sys.exc_info(),
                     extra={
                         'status_code': 400,
-                        'request': request
                     }
                 )
                 response = http.HttpResponseBadRequest()

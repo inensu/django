@@ -4,8 +4,9 @@ import re
 import sys
 import urllib
 import urlparse
-from email.Utils import formatdate
+from email.utils import formatdate
 
+from django.utils.datastructures import MultiValueDict
 from django.utils.encoding import smart_str, force_unicode
 from django.utils.functional import allow_lazy
 
@@ -49,7 +50,9 @@ def urlencode(query, doseq=0):
     unicode strings. The parameters are first case to UTF-8 encoded strings and
     then encoded as per normal.
     """
-    if hasattr(query, 'items'):
+    if isinstance(query, MultiValueDict):
+        query = query.lists()
+    elif hasattr(query, 'items'):
         query = query.items()
     return urllib.urlencode(
         [(smart_str(k),
@@ -163,7 +166,7 @@ def int_to_base36(i):
     # Construct base36 representation
     while factor >= 0:
         j = 36 ** factor
-        base36.append(digits[i / j])
+        base36.append(digits[i // j])
         i = i % j
         factor -= 1
     return ''.join(base36)
@@ -195,8 +198,8 @@ if sys.version_info >= (2, 6):
         p1, p2 = urlparse.urlparse(url1), urlparse.urlparse(url2)
         return (p1.scheme, p1.hostname, p1.port) == (p2.scheme, p2.hostname, p2.port)
 else:
-    # Python 2.4, 2.5 compatibility. This actually works for Python 2.6 and
-    # above, but the above definition is much more obviously correct and so is
+    # Python 2.5 compatibility. This actually works for Python 2.6 and above,
+    # but the above definition is much more obviously correct and so is
     # preferred going forward.
     def same_origin(url1, url2):
         """

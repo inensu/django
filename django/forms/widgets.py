@@ -4,7 +4,6 @@ HTML Widget classes
 
 import copy
 import datetime
-import time
 from itertools import chain
 from urlparse import urljoin
 from util import flatatt
@@ -372,7 +371,6 @@ class Textarea(Widget):
 
 class DateInput(Input):
     input_type = 'text'
-    format = '%Y-%m-%d'     # '2006-10-25'
 
     def __init__(self, attrs=None, format=None):
         super(DateInput, self).__init__(attrs)
@@ -397,14 +395,13 @@ class DateInput(Input):
         # necessarily the format used for this widget. Attempt to convert it.
         try:
             input_format = formats.get_format('DATE_INPUT_FORMATS')[0]
-            initial = datetime.date(*time.strptime(initial, input_format)[:3])
+            initial = datetime.datetime.strptime(initial, input_format).date()
         except (TypeError, ValueError):
             pass
         return super(DateInput, self)._has_changed(self._format_value(initial), data)
 
 class DateTimeInput(Input):
     input_type = 'text'
-    format = '%Y-%m-%d %H:%M:%S'     # '2006-10-25 14:30:59'
 
     def __init__(self, attrs=None, format=None):
         super(DateTimeInput, self).__init__(attrs)
@@ -429,14 +426,13 @@ class DateTimeInput(Input):
         # necessarily the format used for this widget. Attempt to convert it.
         try:
             input_format = formats.get_format('DATETIME_INPUT_FORMATS')[0]
-            initial = datetime.datetime(*time.strptime(initial, input_format)[:6])
+            initial = datetime.datetime.strptime(initial, input_format)
         except (TypeError, ValueError):
             pass
         return super(DateTimeInput, self)._has_changed(self._format_value(initial), data)
 
 class TimeInput(Input):
     input_type = 'text'
-    format = '%H:%M:%S'     # '14:30:59'
 
     def __init__(self, attrs=None, format=None):
         super(TimeInput, self).__init__(attrs)
@@ -460,7 +456,7 @@ class TimeInput(Input):
         # necessarily the format used for this  widget. Attempt to convert it.
         try:
             input_format = formats.get_format('TIME_INPUT_FORMATS')[0]
-            initial = datetime.time(*time.strptime(initial, input_format)[3:6])
+            initial = datetime.datetime.strptime(initial, input_format).time()
         except (TypeError, ValueError):
             pass
         return super(TimeInput, self)._has_changed(self._format_value(initial), data)
@@ -503,6 +499,8 @@ class CheckboxInput(Widget):
         return bool(initial) != bool(data)
 
 class Select(Widget):
+    allow_multiple_selected = False
+
     def __init__(self, attrs=None, choices=()):
         super(Select, self).__init__(attrs)
         # choices can be any iterable, but we may need to render this widget
@@ -522,14 +520,20 @@ class Select(Widget):
 
     def render_option(self, selected_choices, option_value, option_label):
         option_value = force_unicode(option_value)
-        selected_html = (option_value in selected_choices) and u' selected="selected"' or ''
+        if option_value in selected_choices:
+            selected_html = u' selected="selected"'
+            if not self.allow_multiple_selected:
+                # Only allow for a single selection.
+                selected_choices.remove(option_value)
+        else:
+            selected_html = ''
         return u'<option value="%s"%s>%s</option>' % (
             escape(option_value), selected_html,
             conditional_escape(force_unicode(option_label)))
 
     def render_options(self, choices, selected_choices):
         # Normalize to strings.
-        selected_choices = set([force_unicode(v) for v in selected_choices])
+        selected_choices = set(force_unicode(v) for v in selected_choices)
         output = []
         for option_value, option_label in chain(self.choices, choices):
             if isinstance(option_label, (list, tuple)):
@@ -575,6 +579,8 @@ class NullBooleanSelect(Select):
         return initial != data
 
 class SelectMultiple(Select):
+    allow_multiple_selected = True
+
     def render(self, name, value, attrs=None, choices=()):
         if value is None: value = []
         final_attrs = self.build_attrs(attrs, name=name)
@@ -829,8 +835,6 @@ class SplitDateTimeWidget(MultiWidget):
     """
     A Widget that splits datetime input into two <input type="text"> boxes.
     """
-    date_format = DateInput.format
-    time_format = TimeInput.format
 
     def __init__(self, attrs=None, date_format=None, time_format=None):
         widgets = (DateInput(attrs=attrs, format=date_format),

@@ -1,4 +1,5 @@
 # coding: utf-8
+from __future__ import with_statement
 
 import re
 import datetime
@@ -11,7 +12,7 @@ from django.core.files import temp as tempfile
 from django.core.urlresolvers import reverse
 # Register auth models with the admin.
 from django.contrib.auth import REDIRECT_FIELD_NAME, admin
-from django.contrib.auth.models import User, Permission, UNUSABLE_PASSWORD
+from django.contrib.auth.models import Group, User, Permission, UNUSABLE_PASSWORD
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin.models import LogEntry, DELETION
 from django.contrib.admin.sites import LOGIN_FORM_KEY
@@ -20,13 +21,13 @@ from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.contrib.admin.views.main import IS_POPUP_VAR
 from django.forms.util import ErrorList
 import django.template.context
+from django.template.response import TemplateResponse
 from django.test import TestCase
-from django.utils import formats
+from django.utils import formats, translation
 from django.utils.cache import get_max_age
 from django.utils.encoding import iri_to_uri
 from django.utils.html import escape
 from django.utils.http import urlencode
-from django.utils.translation import activate, deactivate
 from django.utils import unittest
 
 # local test models
@@ -36,7 +37,11 @@ from models import (Article, BarAccount, CustomArticle, EmptyModel,
     Language, Collector, Widget, Grommet, DooHickey, FancyDoodad, Whatsit,
     Category, Post, Plot, FunkyTag, Chapter, Book, Promo, WorkHour, Employee,
     Question, Answer, Inquisition, Actor, FoodDelivery,
-    RowLevelChangePermissionModel, Paper, CoverLetter, Story, OtherStory)
+    RowLevelChangePermissionModel, Paper, CoverLetter, Story, OtherStory,
+    ComplexSortedPerson, Parent, Child)
+
+ERROR_MESSAGE = "Please enter the correct username and password \
+for a staff account. Note that both fields are case-sensitive."
 
 
 class AdminViewBasicTest(TestCase):
@@ -47,6 +52,8 @@ class AdminViewBasicTest(TestCase):
     # variable. That way we can test a second AdminSite just by subclassing
     # this test case and changing urlbit.
     urlbit = 'admin'
+
+    urls = "regressiontests.admin_views.urls"
 
     def setUp(self):
         self.old_USE_I18N = settings.USE_I18N
@@ -76,6 +83,7 @@ class AdminViewBasicTest(TestCase):
         A smoke test to ensure GET on the add_view works.
         """
         response = self.client.get('/test_admin/%s/admin_views/section/add/' % self.urlbit)
+        self.assertIsInstance(response, TemplateResponse)
         self.assertEqual(response.status_code, 200)
 
     def testAddWithGETArgs(self):
@@ -91,6 +99,7 @@ class AdminViewBasicTest(TestCase):
         A smoke test to ensure GET on the change_view works.
         """
         response = self.client.get('/test_admin/%s/admin_views/section/1/' % self.urlbit)
+        self.assertIsInstance(response, TemplateResponse)
         self.assertEqual(response.status_code, 200)
 
     def testBasicEditGetStringPK(self):
@@ -201,7 +210,7 @@ class AdminViewBasicTest(TestCase):
         Ensure we can sort on a list_display field that is a callable
         (column 2 is callable_year in ArticleAdmin)
         """
-        response = self.client.get('/test_admin/%s/admin_views/article/' % self.urlbit, {'ot': 'asc', 'o': 2})
+        response = self.client.get('/test_admin/%s/admin_views/article/' % self.urlbit, {'o': 2})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(
             response.content.index('Oldest content') < response.content.index('Middle content') and
@@ -214,7 +223,7 @@ class AdminViewBasicTest(TestCase):
         Ensure we can sort on a list_display field that is a Model method
         (colunn 3 is 'model_year' in ArticleAdmin)
         """
-        response = self.client.get('/test_admin/%s/admin_views/article/' % self.urlbit, {'ot': 'dsc', 'o': 3})
+        response = self.client.get('/test_admin/%s/admin_views/article/' % self.urlbit, {'o': '-3'})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(
             response.content.index('Newest content') < response.content.index('Middle content') and
@@ -227,12 +236,123 @@ class AdminViewBasicTest(TestCase):
         Ensure we can sort on a list_display field that is a ModelAdmin method
         (colunn 4 is 'modeladmin_year' in ArticleAdmin)
         """
-        response = self.client.get('/test_admin/%s/admin_views/article/' % self.urlbit, {'ot': 'asc', 'o': 4})
+        response = self.client.get('/test_admin/%s/admin_views/article/' % self.urlbit, {'o': '4'})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(
             response.content.index('Oldest content') < response.content.index('Middle content') and
             response.content.index('Middle content') < response.content.index('Newest content'),
             "Results of sorting on ModelAdmin method are out of order."
+        )
+
+    def testChangeListSortingMultiple(self):
+        p1 = Person.objects.create(name="Chris", gender=1, alive=True)
+        p2 = Person.objects.create(name="Chris", gender=2, alive=True)
+        p3 = Person.objects.create(name="Bob", gender=1, alive=True)
+        link = '<a href="%s/'
+
+        # Sort by name, gender
+        # This hard-codes the URL because it'll fail if it runs against the
+        # 'admin2' custom admin (which doesn't have the Person model).
+        response = self.client.get('/test_admin/admin/admin_views/person/', {'o': '1.2'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % p3.id) < response.content.index(link % p1.id) and
+            response.content.index(link % p1.id) < response.content.index(link % p2.id)
+        )
+
+        # Sort by gender descending, name
+        response = self.client.get('/test_admin/admin/admin_views/person/', {'o': '-2.1'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % p2.id) < response.content.index(link % p3.id) and
+            response.content.index(link % p3.id) < response.content.index(link % p1.id)
+        )
+
+    def testChangeListSortingPreserveQuerySetOrdering(self):
+        # If no ordering on ModelAdmin, or query string, the underlying order of
+        # the queryset should not be changed.
+
+        p1 = Person.objects.create(name="Amy", gender=1, alive=True, age=80)
+        p2 = Person.objects.create(name="Bob", gender=1, alive=True, age=70)
+        p3 = Person.objects.create(name="Chris", gender=2, alive=False, age=60)
+        link = '<a href="%s/'
+
+        # This hard-codes the URL because it'll fail if it runs against the
+        # 'admin2' custom admin (which doesn't have the Person model).
+        response = self.client.get('/test_admin/admin/admin_views/person/', {})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % p3.id) < response.content.index(link % p2.id) and
+            response.content.index(link % p2.id) < response.content.index(link % p1.id)
+        )
+
+    def testChangeListSortingModelMeta(self):
+        # Test ordering on Model Meta is respected
+
+        l1 = Language.objects.create(iso='ur', name='Urdu')
+        l2 = Language.objects.create(iso='ar', name='Arabic')
+        link = '<a href="%s/'
+
+        response = self.client.get('/test_admin/admin/admin_views/language/', {})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % l2.pk) < response.content.index(link % l1.pk)
+        )
+
+        # Test we can override with query string
+        response = self.client.get('/test_admin/admin/admin_views/language/', {'o':'-1'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % l1.pk) < response.content.index(link % l2.pk)
+        )
+
+    def testChangeListSortingOverrideModelAdmin(self):
+        # Test ordering on Model Admin is respected, and overrides Model Meta
+        dt = datetime.datetime.now()
+        p1 = Podcast.objects.create(name="A", release_date=dt)
+        p2 = Podcast.objects.create(name="B", release_date=dt - datetime.timedelta(10))
+
+        link = '<a href="%s/'
+        response = self.client.get('/test_admin/admin/admin_views/podcast/', {})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % p1.pk) < response.content.index(link % p2.pk)
+        )
+
+    def testMultipleSortSameField(self):
+        # Check that we get the columns we expect if we have two columns
+        # that correspond to the same ordering field
+        dt = datetime.datetime.now()
+        p1 = Podcast.objects.create(name="A", release_date=dt)
+        p2 = Podcast.objects.create(name="B", release_date=dt - datetime.timedelta(10))
+
+        link = '<a href="%s/'
+        response = self.client.get('/test_admin/admin/admin_views/podcast/', {})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            response.content.index(link % p1.pk) < response.content.index(link % p2.pk)
+        )
+
+        p1 = ComplexSortedPerson.objects.create(name="Bob", age=10)
+        p2 = ComplexSortedPerson.objects.create(name="Amy", age=20)
+        link = '<a href="%s/'
+
+        response = self.client.get('/test_admin/admin/admin_views/complexsortedperson/', {})
+        self.assertEqual(response.status_code, 200)
+        # Should have 5 columns (including action checkbox col)
+        self.assertContains(response, '<th scope="col"', count=5)
+
+        self.assertContains(response, 'Name')
+        self.assertContains(response, 'Colored name')
+
+        # Check order
+        self.assertTrue(
+            response.content.index('Name') < response.content.index('Colored name')
+        )
+
+        # Check sorting - should be by name
+        self.assertTrue(
+            response.content.index(link % p2.id) < response.content.index(link % p1.id)
         )
 
     def testLimitedFilter(self):
@@ -295,6 +415,11 @@ class AdminViewBasicTest(TestCase):
         """Ensure incorrect lookup parameters are handled gracefully."""
         response = self.client.get('/test_admin/%s/admin_views/thing/' % self.urlbit, {'notarealfield': '5'})
         self.assertRedirects(response, '/test_admin/%s/admin_views/thing/?e=1' % self.urlbit)
+
+        # Spanning relationships through an inexistant related object (Refs #16716)
+        response = self.client.get('/test_admin/%s/admin_views/thing/' % self.urlbit, {'notarealfield__whatever': '5'})
+        self.assertRedirects(response, '/test_admin/%s/admin_views/thing/?e=1' % self.urlbit)
+
         response = self.client.get('/test_admin/%s/admin_views/thing/' % self.urlbit, {'color__id__exact': 'StringNotInteger!'})
         self.assertRedirects(response, '/test_admin/%s/admin_views/thing/?e=1' % self.urlbit)
 
@@ -358,42 +483,31 @@ class AdminViewBasicTest(TestCase):
         if the default language is non-English but the selected language
         is English. See #13388 and #3594 for more details.
         """
-        try:
-            settings.LANGUAGE_CODE = 'fr'
-            activate('en-us')
-            response = self.client.get('/test_admin/admin/jsi18n/')
-            self.assertNotContains(response, 'Choisir une heure')
-        finally:
-            deactivate()
+        with self.settings(LANGUAGE_CODE='fr'):
+            with translation.override('en-us'):
+                response = self.client.get('/test_admin/admin/jsi18n/')
+                self.assertNotContains(response, 'Choisir une heure')
 
     def testI18NLanguageNonEnglishFallback(self):
         """
         Makes sure that the fallback language is still working properly
         in cases where the selected language cannot be found.
         """
-        try:
-            settings.LANGUAGE_CODE = 'fr'
-            activate('none')
-            response = self.client.get('/test_admin/admin/jsi18n/')
-            self.assertContains(response, 'Choisir une heure')
-        finally:
-            deactivate()
+        with self.settings(LANGUAGE_CODE='fr'):
+            with translation.override('none'):
+                response = self.client.get('/test_admin/admin/jsi18n/')
+                self.assertContains(response, 'Choisir une heure')
 
     def testL10NDeactivated(self):
         """
         Check if L10N is deactivated, the Javascript i18n view doesn't
         return localized date/time formats. Refs #14824.
         """
-        try:
-            settings.LANGUAGE_CODE = 'ru'
-            settings.USE_L10N = False
-            activate('ru')
-            response = self.client.get('/test_admin/admin/jsi18n/')
-            self.assertNotContains(response, '%d.%m.%Y %H:%M:%S')
-            self.assertContains(response, '%Y-%m-%d %H:%M:%S')
-        finally:
-            deactivate()
-
+        with self.settings(LANGUAGE_CODE='ru', USE_L10N=False):
+            with translation.override('none'):
+                response = self.client.get('/test_admin/admin/jsi18n/')
+                self.assertNotContains(response, '%d.%m.%Y %H:%M:%S')
+                self.assertContains(response, '%Y-%m-%d %H:%M:%S')
 
     def test_disallowed_filtering(self):
         self.assertRaises(SuspiciousOperation,
@@ -433,6 +547,8 @@ class AdminViewBasicTest(TestCase):
             self.fail("Filters should be allowed if they are defined on a ForeignKey pointing to this model")
 
 class AdminJavaScriptTest(AdminViewBasicTest):
+    urls = "regressiontests.admin_views.urls"
+
     def testSingleWidgetFirsFieldFocus(self):
         """
         JavaScript-assisted auto-focus on first field.
@@ -456,6 +572,7 @@ class AdminJavaScriptTest(AdminViewBasicTest):
 
 
 class SaveAsTests(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml','admin-views-person.xml']
 
     def setUp(self):
@@ -481,47 +598,55 @@ class SaveAsTests(TestCase):
         self.assertTrue(response.context['save_as'])
         post_data = {'_saveasnew':'', 'name':'John M', 'gender':3, 'alive':'checked'}
         response = self.client.post('/test_admin/admin/admin_views/person/1/', post_data)
-        self.assertEqual(response.context['form_url'], '../add/')
+        self.assertEqual(response.context['form_url'], '/test_admin/admin/admin_views/person/add/')
 
 class CustomModelAdminTest(AdminViewBasicTest):
+    urls = "regressiontests.admin_views.urls"
     urlbit = "admin2"
 
     def testCustomAdminSiteLoginForm(self):
         self.client.logout()
-        request = self.client.get('/test_admin/admin2/')
-        self.assertEqual(request.status_code, 200)
+        response = self.client.get('/test_admin/admin2/')
+        self.assertIsInstance(response, TemplateResponse)
+        self.assertEqual(response.status_code, 200)
         login = self.client.post('/test_admin/admin2/', {
             REDIRECT_FIELD_NAME: '/test_admin/admin2/',
             LOGIN_FORM_KEY: 1,
             'username': 'customform',
             'password': 'secret',
         })
+        self.assertIsInstance(login, TemplateResponse)
         self.assertEqual(login.status_code, 200)
         self.assertContains(login, 'custom form error')
 
     def testCustomAdminSiteLoginTemplate(self):
         self.client.logout()
         request = self.client.get('/test_admin/admin2/')
+        self.assertIsInstance(request, TemplateResponse)
         self.assertTemplateUsed(request, 'custom_admin/login.html')
         self.assertTrue('Hello from a custom login template' in request.content)
 
     def testCustomAdminSiteLogoutTemplate(self):
         request = self.client.get('/test_admin/admin2/logout/')
+        self.assertIsInstance(request, TemplateResponse)
         self.assertTemplateUsed(request, 'custom_admin/logout.html')
         self.assertTrue('Hello from a custom logout template' in request.content)
 
     def testCustomAdminSiteIndexViewAndTemplate(self):
         request = self.client.get('/test_admin/admin2/')
+        self.assertIsInstance(request, TemplateResponse)
         self.assertTemplateUsed(request, 'custom_admin/index.html')
         self.assertTrue('Hello from a custom index template *bar*' in request.content)
 
     def testCustomAdminSitePasswordChangeTemplate(self):
         request = self.client.get('/test_admin/admin2/password_change/')
+        self.assertIsInstance(request, TemplateResponse)
         self.assertTemplateUsed(request, 'custom_admin/password_change_form.html')
         self.assertTrue('Hello from a custom password change form template' in request.content)
 
     def testCustomAdminSitePasswordChangeDoneTemplate(self):
         request = self.client.get('/test_admin/admin2/password_change/done/')
+        self.assertIsInstance(request, TemplateResponse)
         self.assertTemplateUsed(request, 'custom_admin/password_change_done.html')
         self.assertTrue('Hello from a custom password change done template' in request.content)
 
@@ -538,6 +663,7 @@ def get_perm(Model, perm):
 class AdminViewPermissionsTest(TestCase):
     """Tests for Admin Views Permissions."""
 
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -631,19 +757,19 @@ class AdminViewPermissionsTest(TestCase):
         self.assertFalse(login.context)
         self.client.get('/test_admin/admin/logout/')
 
-        # Test if user enters email address
+        # Test if user enters e-mail address
         request = self.client.get('/test_admin/admin/')
         self.assertEqual(request.status_code, 200)
         login = self.client.post('/test_admin/admin/', self.super_email_login)
         self.assertContains(login, "Your e-mail address is not your username")
         # only correct passwords get a username hint
         login = self.client.post('/test_admin/admin/', self.super_email_bad_login)
-        self.assertContains(login, "Please enter a correct username and password.")
+        self.assertContains(login, ERROR_MESSAGE)
         new_user = User(username='jondoe', password='secret', email='super@example.com')
         new_user.save()
-        # check to ensure if there are multiple email addresses a user doesn't get a 500
+        # check to ensure if there are multiple e-mail addresses a user doesn't get a 500
         login = self.client.post('/test_admin/admin/', self.super_email_login)
-        self.assertContains(login, "Please enter a correct username and password.")
+        self.assertContains(login, ERROR_MESSAGE)
 
         # Add User
         request = self.client.get('/test_admin/admin/')
@@ -674,7 +800,7 @@ class AdminViewPermissionsTest(TestCase):
         self.assertEqual(request.status_code, 200)
         login = self.client.post('/test_admin/admin/', self.joepublic_login)
         self.assertEqual(login.status_code, 200)
-        self.assertContains(login, "Please enter a correct username and password.")
+        self.assertContains(login, ERROR_MESSAGE)
 
         # Requests without username should not return 500 errors.
         request = self.client.get('/test_admin/admin/')
@@ -719,7 +845,7 @@ class AdminViewPermissionsTest(TestCase):
         self.client.post('/test_admin/admin/', self.adduser_login)
         addpage = self.client.get('/test_admin/admin/admin_views/article/add/')
         self.assertEqual(addpage.status_code, 200)
-        change_list_link = '<a href="../">Articles</a> &rsaquo;'
+        change_list_link = '&rsaquo; <a href="/test_admin/admin/admin_views/article/">Articles</a>'
         self.assertFalse(change_list_link in addpage.content,
                     'User restricted to add permission is given link to change list view in breadcrumbs.')
         post = self.client.post('/test_admin/admin/admin_views/article/add/', add_dict)
@@ -939,6 +1065,7 @@ class AdminViewPermissionsTest(TestCase):
 
 
 class AdminViewDeletedObjectsTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml', 'deleted-objects.xml']
 
     def setUp(self):
@@ -1054,6 +1181,7 @@ class AdminViewDeletedObjectsTest(TestCase):
         self.assertContains(response, should_contain)
 
 class AdminViewStringPrimaryKeyTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml', 'string-primary-key.xml']
 
     def __init__(self, *args):
@@ -1145,6 +1273,7 @@ class AdminViewStringPrimaryKeyTest(TestCase):
 
 
 class SecureViewTests(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -1227,19 +1356,19 @@ class SecureViewTests(TestCase):
         # make sure the view removes test cookie
         self.assertEqual(self.client.session.test_cookie_worked(), False)
 
-        # Test if user enters email address
+        # Test if user enters e-mail address
         request = self.client.get('/test_admin/admin/secure-view/')
         self.assertEqual(request.status_code, 200)
         login = self.client.post('/test_admin/admin/secure-view/', self.super_email_login)
         self.assertContains(login, "Your e-mail address is not your username")
         # only correct passwords get a username hint
         login = self.client.post('/test_admin/admin/secure-view/', self.super_email_bad_login)
-        self.assertContains(login, "Please enter a correct username and password.")
+        self.assertContains(login, ERROR_MESSAGE)
         new_user = User(username='jondoe', password='secret', email='super@example.com')
         new_user.save()
-        # check to ensure if there are multiple email addresses a user doesn't get a 500
+        # check to ensure if there are multiple e-mail addresses a user doesn't get a 500
         login = self.client.post('/test_admin/admin/secure-view/', self.super_email_login)
-        self.assertContains(login, "Please enter a correct username and password.")
+        self.assertContains(login, ERROR_MESSAGE)
 
         # Add User
         request = self.client.get('/test_admin/admin/secure-view/')
@@ -1271,7 +1400,7 @@ class SecureViewTests(TestCase):
         login = self.client.post('/test_admin/admin/secure-view/', self.joepublic_login)
         self.assertEqual(login.status_code, 200)
         # Login.context is a list of context dicts we just need to check the first one.
-        self.assertContains(login, "Please enter a correct username and password.")
+        self.assertContains(login, ERROR_MESSAGE)
 
         # 8509 - if a normal user is already logged in, it is possible
         # to change user into the superuser without error
@@ -1302,6 +1431,7 @@ class SecureViewTests(TestCase):
         self.assertEqual(response['Location'], 'http://example.com/users/super/')
 
 class AdminViewUnicodeTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-unicode.xml']
 
     def setUp(self):
@@ -1355,6 +1485,7 @@ class AdminViewUnicodeTest(TestCase):
 
 
 class AdminViewListEditable(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml', 'admin-views-person.xml']
 
     def setUp(self):
@@ -1711,6 +1842,7 @@ class AdminViewListEditable(TestCase):
 
 
 class AdminSearchTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users', 'multiple-child-classes',
                 'admin-views-person']
 
@@ -1757,6 +1889,7 @@ class AdminSearchTest(TestCase):
 
 
 class AdminInheritedInlinesTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml',]
 
     def setUp(self):
@@ -1842,6 +1975,7 @@ class AdminInheritedInlinesTest(TestCase):
         self.assertEqual(Persona.objects.all()[0].accounts.count(), 2)
 
 class AdminActionsTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml', 'admin-views-actions.xml']
 
     def setUp(self):
@@ -1874,7 +2008,8 @@ class AdminActionsTest(TestCase):
             'post': 'yes',
         }
         confirmation = self.client.post('/test_admin/admin/admin_views/subscriber/', action_data)
-        self.assertContains(confirmation, "Are you sure you want to delete the selected subscribers")
+        self.assertIsInstance(confirmation, TemplateResponse)
+        self.assertContains(confirmation, "Are you sure you want to delete the selected subscribers?")
         self.assertTrue(confirmation.content.count(ACTION_CHECKBOX_NAME) == 2)
         response = self.client.post('/test_admin/admin/admin_views/subscriber/', delete_confirmation_data)
         self.assertEqual(Subscriber.objects.count(), 0)
@@ -1956,9 +2091,23 @@ class AdminActionsTest(TestCase):
             'action' : 'external_mail',
             'index': 0,
         }
-        url = '/test_admin/admin/admin_views/externalsubscriber/?ot=asc&o=1'
+        url = '/test_admin/admin/admin_views/externalsubscriber/?o=1'
         response = self.client.post(url, action_data)
         self.assertRedirects(response, url)
+
+    def test_actions_ordering(self):
+        """
+        Ensure that actions are ordered as expected.
+        Refs #15964.
+        """
+        response = self.client.get('/test_admin/admin/admin_views/externalsubscriber/')
+        self.assertTrue('''<label>Action: <select name="action">
+<option value="" selected="selected">---------</option>
+<option value="delete_selected">Delete selected external subscribers</option>
+<option value="redirect_to">Redirect to (Awesome action)</option>
+<option value="external_mail">External mail (Another awesome action)</option>
+</select>'''in response.content,
+        )
 
     def test_model_without_action(self):
         "Tests a ModelAdmin without any action"
@@ -2048,6 +2197,7 @@ class AdminActionsTest(TestCase):
 
 
 class TestCustomChangeList(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
     urlbit = 'admin'
 
@@ -2075,6 +2225,7 @@ class TestCustomChangeList(TestCase):
 
 
 class TestInlineNotEditable(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2092,6 +2243,7 @@ class TestInlineNotEditable(TestCase):
         self.assertEqual(response.status_code, 200)
 
 class AdminCustomQuerysetTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2146,6 +2298,7 @@ class AdminCustomQuerysetTest(TestCase):
         self.assertContains(response, '<li class="info">The cover letter &quot;John Doe II&quot; was changed successfully.</li>')
 
 class AdminInlineFileUploadTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml', 'admin-views-actions.xml']
     urlbit = 'admin'
 
@@ -2191,6 +2344,7 @@ class AdminInlineFileUploadTest(TestCase):
 
 
 class AdminInlineTests(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2508,6 +2662,7 @@ class AdminInlineTests(TestCase):
 
 
 class NeverCacheTests(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml', 'admin-views-colors.xml', 'admin-views-fabrics.xml']
 
     def setUp(self):
@@ -2579,7 +2734,33 @@ class NeverCacheTests(TestCase):
         self.assertEqual(get_max_age(response), None)
 
 
+class PrePopulatedTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
+    fixtures = ['admin-views-users.xml']
+
+    def setUp(self):
+        self.client.login(username='super', password='secret')
+
+    def tearDown(self):
+        self.client.logout()
+
+    def test_prepopulated_on(self):
+        response = self.client.get('/test_admin/admin/admin_views/prepopulatedpost/add/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "id: '#id_slug',")
+        self.assertContains(response, "field['dependency_ids'].push('#id_title');")
+        self.assertContains(response, "id: '#id_prepopulatedsubpost_set-0-subslug',")
+
+    def test_prepopulated_off(self):
+        response = self.client.get('/test_admin/admin/admin_views/prepopulatedpost/1/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "A Long Title")
+        self.assertNotContains(response, "id: '#id_slug'")
+        self.assertNotContains(response, "field['dependency_ids'].push('#id_title');")
+        self.assertNotContains(response, "id: '#id_prepopulatedsubpost_set-0-subslug',")
+
 class ReadonlyTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2647,6 +2828,7 @@ class ReadonlyTest(TestCase):
 
 
 class RawIdFieldsTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2682,6 +2864,7 @@ class UserAdminTest(TestCase):
     """
     Tests user CRUD functionality.
     """
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2761,6 +2944,45 @@ class UserAdminTest(TestCase):
         self.assertEqual(User.objects.count(), user_count + 1)
         self.assertNotEqual(new_user.password, UNUSABLE_PASSWORD)
 
+    def test_user_permission_performance(self):
+        u = User.objects.all()[0]
+
+        with self.assertNumQueries(7):
+            response = self.client.get('/test_admin/admin/auth/user/%s/' % u.pk)
+            self.assertEqual(response.status_code, 200)
+
+
+class GroupAdminTest(TestCase):
+    """
+    Tests group CRUD functionality.
+    """
+    urls = "regressiontests.admin_views.urls"
+    fixtures = ['admin-views-users.xml']
+
+    def setUp(self):
+        self.client.login(username='super', password='secret')
+
+    def tearDown(self):
+        self.client.logout()
+
+    def test_save_button(self):
+        group_count = Group.objects.count()
+        response = self.client.post('/test_admin/admin/auth/group/add/', {
+            'name': 'newgroup',
+        })
+
+        new_group = Group.objects.order_by('-id')[0]
+        self.assertRedirects(response, '/test_admin/admin/auth/group/')
+        self.assertEqual(Group.objects.count(), group_count + 1)
+
+    def test_group_permission_performance(self):
+        g = Group.objects.create(name="test_group")
+
+        with self.assertNumQueries(6):  # instead of 259!
+            response = self.client.get('/test_admin/admin/auth/group/%s/' % g.pk)
+            self.assertEqual(response.status_code, 200)
+
+
 try:
     import docutils
 except ImportError:
@@ -2768,6 +2990,7 @@ except ImportError:
 
 #@unittest.skipUnless(docutils, "no docutils installed.")
 class AdminDocsTest(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2810,6 +3033,7 @@ class AdminDocsTest(TestCase):
 AdminDocsTest = unittest.skipUnless(docutils, "no docutils installed.")(AdminDocsTest)
 
 class ValidXHTMLTests(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
     urlbit = 'admin'
 
@@ -2840,6 +3064,7 @@ class ValidXHTMLTests(TestCase):
 
 
 class DateHierarchyTests(TestCase):
+    urls = "regressiontests.admin_views.urls"
     fixtures = ['admin-views-users.xml']
 
     def setUp(self):
@@ -2963,3 +3188,70 @@ class DateHierarchyTests(TestCase):
             self.assert_non_localized_year(response, 2000)
             self.assert_non_localized_year(response, 2003)
             self.assert_non_localized_year(response, 2005)
+
+class AdminCustomSaveRelatedTests(TestCase):
+    """
+    Ensure that one can easily customize the way related objects are saved.
+    Refs #16115.
+    """
+    urls = "regressiontests.admin_views.urls"
+    fixtures = ['admin-views-users.xml']
+
+    def setUp(self):
+        self.client.login(username='super', password='secret')
+
+    def test_should_be_able_to_edit_related_objects_on_add_view(self):
+        post = {
+            'child_set-TOTAL_FORMS': '3',
+            'child_set-INITIAL_FORMS': '0',
+            'name': 'Josh Stone',
+            'child_set-0-name': 'Paul',
+            'child_set-1-name': 'Catherine',
+        }
+        response = self.client.post('/test_admin/admin/admin_views/parent/add/', post)
+        self.assertEqual(1, Parent.objects.count())
+        self.assertEqual(2, Child.objects.count())
+
+        children_names = list(Child.objects.order_by('name').values_list('name', flat=True))
+
+        self.assertEqual('Josh Stone', Parent.objects.latest('id').name)
+        self.assertEqual([u'Catherine Stone', u'Paul Stone'], children_names)
+
+    def test_should_be_able_to_edit_related_objects_on_change_view(self):
+        parent = Parent.objects.create(name='Josh Stone')
+        paul = Child.objects.create(parent=parent, name='Paul')
+        catherine = Child.objects.create(parent=parent, name='Catherine')
+        post = {
+            'child_set-TOTAL_FORMS': '5',
+            'child_set-INITIAL_FORMS': '2',
+            'name': 'Josh Stone',
+            'child_set-0-name': 'Paul',
+            'child_set-0-id': paul.id,
+            'child_set-1-name': 'Catherine',
+            'child_set-1-id': catherine.id,
+        }
+        response = self.client.post('/test_admin/admin/admin_views/parent/%s/' % parent.id, post)
+
+        children_names = list(Child.objects.order_by('name').values_list('name', flat=True))
+
+        self.assertEqual('Josh Stone', Parent.objects.latest('id').name)
+        self.assertEqual([u'Catherine Stone', u'Paul Stone'], children_names)
+
+    def test_should_be_able_to_edit_related_objects_on_changelist_view(self):
+        parent = Parent.objects.create(name='Josh Rock')
+        paul = Child.objects.create(parent=parent, name='Paul')
+        catherine = Child.objects.create(parent=parent, name='Catherine')
+        post = {
+            'form-TOTAL_FORMS': '1',
+            'form-INITIAL_FORMS': '1',
+            'form-MAX_NUM_FORMS': '0',
+            'form-0-id': parent.id,
+            'form-0-name': 'Josh Stone',
+            '_save': 'Save'
+        }
+
+        response = self.client.post('/test_admin/admin/admin_views/parent/', post)
+        children_names = list(Child.objects.order_by('name').values_list('name', flat=True))
+
+        self.assertEqual('Josh Stone', Parent.objects.latest('id').name)
+        self.assertEqual([u'Catherine Stone', u'Paul Stone'], children_names)

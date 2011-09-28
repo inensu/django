@@ -1,24 +1,37 @@
+from __future__ import with_statement
+
 from django.contrib import admin
 from django.contrib.admin.options import IncorrectLookupParameters
-from django.contrib.admin.views.main import ChangeList
-from django.core.paginator import Paginator
+from django.contrib.admin.views.main import ChangeList, SEARCH_VAR, ALL_VAR
 from django.template import Context, Template
-from django.test import TransactionTestCase
+from django.test import TestCase
+from django.test.client import RequestFactory
+from django.contrib.auth.models import User
 
 from models import (Child, Parent, Genre, Band, Musician, Group, Quartet,
     Membership, ChordsMusician, ChordsBand, Invitation)
 
+from admin import (ChildAdmin, QuartetAdmin, BandAdmin, ChordsBandAdmin,
+    GroupAdmin, ParentAdmin, DynamicListDisplayChildAdmin, CustomPaginationAdmin,
+    FilteredChildAdmin, CustomPaginator, site as custom_site)
 
-class ChangeListTests(TransactionTestCase):
+
+class ChangeListTests(TestCase):
+    urls = "regressiontests.admin_changelist.urls"
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
     def test_select_related_preserved(self):
         """
         Regression test for #10348: ChangeList.get_query_set() shouldn't
         overwrite a custom select_related provided by ModelAdmin.queryset().
         """
         m = ChildAdmin(Child, admin.site)
-        cl = ChangeList(MockRequest(), Child, m.list_display, m.list_display_links,
+        request = self.factory.get('/child/')
+        cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all, m.list_editable, m)
         self.assertEqual(cl.query_set.query.select_related, {'parent': {'name': {}}})
 
     def test_result_list_empty_changelist_value(self):
@@ -27,11 +40,11 @@ class ChangeListTests(TransactionTestCase):
         for relationship fields
         """
         new_child = Child.objects.create(name='name', parent=None)
-        request = MockRequest()
+        request = self.factory.get('/child/')
         m = ChildAdmin(Child, admin.site)
         cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all, m.list_editable, m)
         cl.formset = None
         template = Template('{% load admin_list %}{% spaceless %}{% result_list cl %}{% endspaceless %}')
         context = Context({'cl': cl})
@@ -40,7 +53,6 @@ class ChangeListTests(TransactionTestCase):
         self.assertFalse(table_output.find(row_html) == -1,
             'Failed to find expected row element: %s' % table_output)
 
-
     def test_result_list_html(self):
         """
         Verifies that inclusion tag result_list generates a table when with
@@ -48,11 +60,11 @@ class ChangeListTests(TransactionTestCase):
         """
         new_parent = Parent.objects.create(name='parent')
         new_child = Child.objects.create(name='name', parent=new_parent)
-        request = MockRequest()
+        request = self.factory.get('/child/')
         m = ChildAdmin(Child, admin.site)
         cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all, m.list_editable, m)
         cl.formset = None
         template = Template('{% load admin_list %}{% spaceless %}{% result_list cl %}{% endspaceless %}')
         context = Context({'cl': cl})
@@ -72,7 +84,7 @@ class ChangeListTests(TransactionTestCase):
         """
         new_parent = Parent.objects.create(name='parent')
         new_child = Child.objects.create(name='name', parent=new_parent)
-        request = MockRequest()
+        request = self.factory.get('/child/')
         m = ChildAdmin(Child, admin.site)
 
         # Test with list_editable fields
@@ -81,7 +93,7 @@ class ChangeListTests(TransactionTestCase):
         m.list_editable = ['name']
         cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all, m.list_editable, m)
         FormSet = m.get_changelist_formset(request)
         cl.formset = FormSet(queryset=cl.result_list)
         template = Template('{% load admin_list %}{% spaceless %}{% result_list cl %}{% endspaceless %}')
@@ -104,8 +116,7 @@ class ChangeListTests(TransactionTestCase):
         new_parent = Parent.objects.create(name='parent')
         for i in range(200):
             new_child = Child.objects.create(name='name %s' % i, parent=new_parent)
-        request = MockRequest()
-        request.GET['p'] = -1 # Anything outside range
+        request = self.factory.get('/child/', data={'p': -1})  # Anything outside range
         m = ChildAdmin(Child, admin.site)
 
         # Test with list_editable fields
@@ -115,23 +126,19 @@ class ChangeListTests(TransactionTestCase):
         self.assertRaises(IncorrectLookupParameters, lambda: \
             ChangeList(request, Child, m.list_display, m.list_display_links,
                     m.list_filter, m.date_hierarchy, m.search_fields,
-                    m.list_select_related, m.list_per_page, m.list_editable, m))
+                    m.list_select_related, m.list_per_page, m.list_max_show_all, m.list_editable, m))
 
     def test_custom_paginator(self):
         new_parent = Parent.objects.create(name='parent')
         for i in range(200):
             new_child = Child.objects.create(name='name %s' % i, parent=new_parent)
 
-        request = MockRequest()
-        m = ChildAdmin(Child, admin.site)
-        m.list_display = ['id', 'name', 'parent']
-        m.list_display_links = ['id']
-        m.list_editable = ['name']
-        m.paginator = CustomPaginator
+        request = self.factory.get('/child/')
+        m = CustomPaginationAdmin(Child, admin.site)
 
         cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all, m.list_editable, m)
 
         cl.get_results(request)
         self.assertIsInstance(cl.paginator, CustomPaginator)
@@ -148,12 +155,14 @@ class ChangeListTests(TransactionTestCase):
         band.genres.add(blues)
 
         m = BandAdmin(Band, admin.site)
-        cl = ChangeList(MockFilteredRequestA(blues.pk), Band, m.list_display,
+        request = self.factory.get('/band/', data={'genres': blues.pk})
+
+        cl = ChangeList(request, Band, m.list_display,
                 m.list_display_links, m.list_filter, m.date_hierarchy,
                 m.search_fields, m.list_select_related, m.list_per_page,
-                m.list_editable, m)
+                m.list_max_show_all, m.list_editable, m)
 
-        cl.get_results(MockFilteredRequestA(blues.pk))
+        cl.get_results(request)
 
         # There's only one Group instance
         self.assertEqual(cl.result_count, 1)
@@ -169,12 +178,14 @@ class ChangeListTests(TransactionTestCase):
         Membership.objects.create(group=band, music=lead, role='bass player')
 
         m = GroupAdmin(Group, admin.site)
-        cl = ChangeList(MockFilteredRequestB(lead.pk), Group, m.list_display,
+        request = self.factory.get('/group/', data={'members': lead.pk})
+
+        cl = ChangeList(request, Group, m.list_display,
                 m.list_display_links, m.list_filter, m.date_hierarchy,
                 m.search_fields, m.list_select_related, m.list_per_page,
-                m.list_editable, m)
+                m.list_max_show_all, m.list_editable, m)
 
-        cl.get_results(MockFilteredRequestB(lead.pk))
+        cl.get_results(request)
 
         # There's only one Group instance
         self.assertEqual(cl.result_count, 1)
@@ -191,12 +202,14 @@ class ChangeListTests(TransactionTestCase):
         Membership.objects.create(group=four, music=lead, role='guitar player')
 
         m = QuartetAdmin(Quartet, admin.site)
-        cl = ChangeList(MockFilteredRequestB(lead.pk), Quartet, m.list_display,
+        request = self.factory.get('/quartet/', data={'members': lead.pk})
+
+        cl = ChangeList(request, Quartet, m.list_display,
                 m.list_display_links, m.list_filter, m.date_hierarchy,
                 m.search_fields, m.list_select_related, m.list_per_page,
-                m.list_editable, m)
+                m.list_max_show_all, m.list_editable, m)
 
-        cl.get_results(MockFilteredRequestB(lead.pk))
+        cl.get_results(request)
 
         # There's only one Quartet instance
         self.assertEqual(cl.result_count, 1)
@@ -213,15 +226,58 @@ class ChangeListTests(TransactionTestCase):
         Invitation.objects.create(band=three, player=lead, instrument='bass')
 
         m = ChordsBandAdmin(ChordsBand, admin.site)
-        cl = ChangeList(MockFilteredRequestB(lead.pk), ChordsBand, m.list_display,
+        request = self.factory.get('/chordsband/', data={'members': lead.pk})
+
+        cl = ChangeList(request, ChordsBand, m.list_display,
                 m.list_display_links, m.list_filter, m.date_hierarchy,
                 m.search_fields, m.list_select_related, m.list_per_page,
-                m.list_editable, m)
+                m.list_max_show_all, m.list_editable, m)
 
-        cl.get_results(MockFilteredRequestB(lead.pk))
+        cl.get_results(request)
 
         # There's only one ChordsBand instance
         self.assertEqual(cl.result_count, 1)
+
+    def test_distinct_for_non_unique_related_object_in_list_filter(self):
+        """
+        Regressions tests for #15819: If a field listed in list_filters
+        is a non-unique related object, distinct() must be called.
+        """
+        parent = Parent.objects.create(name='Mary')
+        # Two children with the same name
+        Child.objects.create(parent=parent, name='Daniel')
+        Child.objects.create(parent=parent, name='Daniel')
+
+        m = ParentAdmin(Parent, admin.site)
+        request = self.factory.get('/parent/', data={'child__name': 'Daniel'})
+
+        cl = ChangeList(request, Parent, m.list_display, m.list_display_links,
+                        m.list_filter, m.date_hierarchy, m.search_fields,
+                        m.list_select_related, m.list_per_page,
+                        m.list_max_show_all, m.list_editable, m)
+
+        # Make sure distinct() was called
+        self.assertEqual(cl.query_set.count(), 1)
+
+    def test_distinct_for_non_unique_related_object_in_search_fields(self):
+        """
+        Regressions tests for #15819: If a field listed in search_fields
+        is a non-unique related object, distinct() must be called.
+        """
+        parent = Parent.objects.create(name='Mary')
+        Child.objects.create(parent=parent, name='Danielle')
+        Child.objects.create(parent=parent, name='Daniel')
+
+        m = ParentAdmin(Parent, admin.site)
+        request = self.factory.get('/parent/', data={SEARCH_VAR: 'daniel'})
+
+        cl = ChangeList(request, Parent, m.list_display, m.list_display_links,
+                        m.list_filter, m.date_hierarchy, m.search_fields,
+                        m.list_select_related, m.list_per_page,
+                        m.list_max_show_all, m.list_editable, m)
+
+        # Make sure distinct() was called
+        self.assertEqual(cl.query_set.count(), 1)
 
     def test_pagination(self):
         """
@@ -233,13 +289,14 @@ class ChangeListTests(TransactionTestCase):
             Child.objects.create(name='name %s' % i, parent=parent)
             Child.objects.create(name='filtered %s' % i, parent=parent)
 
-        request = MockRequest()
+        request = self.factory.get('/child/')
 
         # Test default queryset
         m = ChildAdmin(Child, admin.site)
         cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all,
+                m.list_editable, m)
         self.assertEqual(cl.query_set.count(), 60)
         self.assertEqual(cl.paginator.count, 60)
         self.assertEqual(cl.paginator.page_range, [1, 2, 3, 4, 5, 6])
@@ -248,50 +305,85 @@ class ChangeListTests(TransactionTestCase):
         m = FilteredChildAdmin(Child, admin.site)
         cl = ChangeList(request, Child, m.list_display, m.list_display_links,
                 m.list_filter, m.date_hierarchy, m.search_fields,
-                m.list_select_related, m.list_per_page, m.list_editable, m)
+                m.list_select_related, m.list_per_page, m.list_max_show_all,
+                m.list_editable, m)
         self.assertEqual(cl.query_set.count(), 30)
         self.assertEqual(cl.paginator.count, 30)
         self.assertEqual(cl.paginator.page_range, [1, 2, 3])
 
+    def test_dynamic_list_display(self):
+        """
+        Regression tests for #14206: dynamic list_display support.
+        """
+        parent = Parent.objects.create(name='parent')
+        for i in range(10):
+            Child.objects.create(name='child %s' % i, parent=parent)
 
-class ChildAdmin(admin.ModelAdmin):
-    list_display = ['name', 'parent']
-    list_per_page = 10
-    def queryset(self, request):
-        return super(ChildAdmin, self).queryset(request).select_related("parent__name")
+        user_noparents = User.objects.create(
+            username='noparents',
+            is_superuser=True)
+        user_parents = User.objects.create(
+            username='parents',
+            is_superuser=True)
 
-class FilteredChildAdmin(admin.ModelAdmin):
-    list_display = ['name', 'parent']
-    list_per_page = 10
-    def queryset(self, request):
-        return super(FilteredChildAdmin, self).queryset(request).filter(
-            name__contains='filtered')
+        def _mocked_authenticated_request(user):
+            request = self.factory.get('/child/')
+            request.user = user
+            return request
 
-class MockRequest(object):
-    GET = {}
+        # Test with user 'noparents'
+        m = custom_site._registry[Child]
+        request = _mocked_authenticated_request(user_noparents)
+        response = m.changelist_view(request)
+        # XXX - Calling render here to avoid ContentNotRenderedError to be
+        # raised. Ticket #15826 should fix this but it's not yet integrated.
+        response.render()
+        self.assertNotContains(response, 'Parent object')
 
-class CustomPaginator(Paginator):
-    def __init__(self, queryset, page_size, orphans=0, allow_empty_first_page=True):
-        super(CustomPaginator, self).__init__(queryset, 5, orphans=2,
-            allow_empty_first_page=allow_empty_first_page)
+        # Test with user 'parents'
+        m = DynamicListDisplayChildAdmin(Child, admin.site)
+        request = _mocked_authenticated_request(user_parents)
+        response = m.changelist_view(request)
+        # XXX - #15826
+        response.render()
+        self.assertContains(response, 'Parent object')
 
+        custom_site.unregister(Child)
 
-class BandAdmin(admin.ModelAdmin):
-    list_filter = ['genres']
+        # Test default implementation
+        custom_site.register(Child, ChildAdmin)
+        m = custom_site._registry[Child]
+        request = _mocked_authenticated_request(user_noparents)
+        response = m.changelist_view(request)
+        # XXX - #15826
+        response.render()
+        self.assertContains(response, 'Parent object')
 
-class GroupAdmin(admin.ModelAdmin):
-    list_filter = ['members']
+    def test_show_all(self):
+        parent = Parent.objects.create(name='anything')
+        for i in range(30):
+            Child.objects.create(name='name %s' % i, parent=parent)
+            Child.objects.create(name='filtered %s' % i, parent=parent)
 
-class QuartetAdmin(admin.ModelAdmin):
-    list_filter = ['members']
+        # Add "show all" parameter to request
+        request = self.factory.get('/child/', data={ALL_VAR: ''})
 
-class ChordsBandAdmin(admin.ModelAdmin):
-    list_filter = ['members']
+        # Test valid "show all" request (number of total objects is under max)
+        m = ChildAdmin(Child, admin.site)
+        # 200 is the max we'll pass to ChangeList
+        cl = ChangeList(request, Child, m.list_display, m.list_display_links,
+                m.list_filter, m.date_hierarchy, m.search_fields,
+                m.list_select_related, m.list_per_page, 200, m.list_editable, m)
+        cl.get_results(request)
+        self.assertEqual(len(cl.result_list), 60)
 
-class MockFilteredRequestA(object):
-    def __init__(self, pk):
-        self.GET = { 'genres' : pk }
+        # Test invalid "show all" request (number of total objects over max)
+        # falls back to paginated pages
+        m = ChildAdmin(Child, admin.site)
+        # 30 is the max we'll pass to ChangeList for this test
+        cl = ChangeList(request, Child, m.list_display, m.list_display_links,
+                m.list_filter, m.date_hierarchy, m.search_fields,
+                m.list_select_related, m.list_per_page, 30, m.list_editable, m)
+        cl.get_results(request)
+        self.assertEqual(len(cl.result_list), 10)
 
-class MockFilteredRequestB(object):
-    def __init__(self, pk):
-        self.GET = { 'members': pk }

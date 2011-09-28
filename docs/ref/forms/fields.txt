@@ -278,6 +278,7 @@ as the rendered output.
 See the :ref:`format localization <format-localization>` documentation for
 more information.
 
+.. _built-in fields:
 
 Built-in ``Field`` classes
 --------------------------
@@ -378,7 +379,9 @@ Takes extra arguments:
 .. attribute:: TypedChoiceField.empty_value
 
     The value to use to represent "empty." Defaults to the empty string;
-    ``None`` is another common choice here.
+    ``None`` is another common choice here. Note that this value will not be
+    coerced by the function given in the ``coerce`` argument, so choose it
+    accordingly.
 
 ``DateField``
 ~~~~~~~~~~~~~
@@ -503,9 +506,14 @@ given length.
     * Empty value: ``None``
     * Normalizes to: An ``UploadedFile`` object that wraps the file content
       and file name into a single object.
-    * Validates that non-empty file data has been bound to the form.
+    * Can validate that non-empty file data has been bound to the form.
     * Error message keys: ``required``, ``invalid``, ``missing``, ``empty``,
       ``max_length``
+
+Has two optional arguments for validation, ``max_length`` and
+``allow_empty_file``. If provided, these ensure that the file name is at
+most the given length, and that validation will succeed even if the file
+content is empty.
 
 To learn more about the ``UploadedFile`` object, see the :doc:`file uploads
 documentation </topics/http/file-uploads>`.
@@ -616,6 +624,43 @@ Takes two optional arguments for validation:
     * Validates that the given value is a valid IPv4 address, using a regular
       expression.
     * Error message keys: ``required``, ``invalid``
+
+``GenericIPAddressField``
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. class:: GenericIPAddressField(**kwargs)
+
+.. versionadded:: 1.4
+
+A field containing either an IPv4 or an IPv6 address.
+
+    * Default widget: ``TextInput``
+    * Empty value: ``''`` (an empty string)
+    * Normalizes to: A Unicode object. IPv6 addresses are
+      normalized as described below.
+    * Validates that the given value is a valid IP address.
+    * Error message keys: ``required``, ``invalid``
+
+The IPv6 address normalization follows :rfc:`4291#section-2.2` section 2.2,
+including using the IPv4 format suggested in paragraph 3 of that section, like
+``::ffff:192.0.2.0``. For example, ``2001:0::0:01`` would be normalized to
+``2001::1``, and ``::ffff:0a0a:0a0a`` to ``::ffff:10.10.10.10``. All characters
+are converted to lowercase.
+
+Takes two optional arguments:
+
+.. attribute:: GenericIPAddressField.protocol
+
+    Limits valid inputs to the specified protocol.
+    Accepted values are ``both`` (default), ``IPv4``
+    or ``IPv6``. Matching is case insensitive.
+
+.. attribute:: GenericIPAddressField.unpack_ipv4
+
+    Unpacks IPv4 mapped addresses like ``::ffff::192.0.2.1``.
+    If this option is enabled that address would be unpacked to
+    ``192.0.2.1``. Default is disabled. Can only be used
+    when ``protocol`` is set to ``'both'``.
 
 ``MultipleChoiceField``
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -756,10 +801,15 @@ Takes the following optional arguments:
     If ``True``, the validator will attempt to load the given URL, raising
     ``ValidationError`` if the page gives a 404. Defaults to ``False``.
 
+.. deprecated:: 1.4
+
+   ``verify_exists`` was deprecated for security reasons and will be removed in
+   Django 1.5. This deprecation also removes ``validator_user_agent``.
+
 .. attribute:: URLField.validator_user_agent
 
     String used as the user-agent used when checking for a URL's existence.
-    Defaults to the value of the ``URL_VALIDATOR_USER_AGENT`` setting.
+    Defaults to the value of the :setting:`URL_VALIDATOR_USER_AGENT` setting.
 
 .. versionchanged:: 1.2
    The URLField previously did not recognize URLs as valid that contained an IDN
@@ -893,8 +943,8 @@ representing a foreign key.  A single argument is required:
 
 .. attribute:: ModelChoiceField.empty_label
 
-    By default the ``<select>`` widget used by ``ModelChoiceField`` will have a
-    an empty choice at the top of the list. You can change the text of this
+    By default the ``<select>`` widget used by ``ModelChoiceField`` will have an
+    empty choice at the top of the list. You can change the text of this
     label (which is ``"---------"`` by default) with the ``empty_label``
     attribute, or you can disable the empty label entirely by setting
     ``empty_label`` to ``None``::

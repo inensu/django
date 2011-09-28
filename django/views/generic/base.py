@@ -1,7 +1,6 @@
 from functools import update_wrapper
 from django import http
 from django.core.exceptions import ImproperlyConfigured
-from django.template import RequestContext, loader
 from django.template.response import TemplateResponse
 from django.utils.log import getLogger
 from django.utils.decorators import classonlymethod
@@ -76,6 +75,9 @@ class View(object):
             }
         )
         return http.HttpResponseNotAllowed(allowed_methods)
+
+    def head(self, *args, **kwargs):
+        return self.get(*args, **kwargs)
 
 
 class TemplateResponseMixin(object):

@@ -1,6 +1,9 @@
 import logging
-import sys
+import traceback
+
+from django.conf import settings
 from django.core import mail
+from django.views.debug import ExceptionReporter, get_exception_reporter_filter
 
 # Make sure a NullHandler is available
 # This was added in Python 2.7/3.2
@@ -27,21 +30,19 @@ logger = getLogger('django')
 if not logger.handlers:
     logger.addHandler(NullHandler())
 
+
 class AdminEmailHandler(logging.Handler):
+    """An exception log handler that emails log entries to site admins.
+
+    If the request is passed as the first argument to the log record,
+    request data will be provided in the email report.
+    """
+
     def __init__(self, include_html=False):
         logging.Handler.__init__(self)
         self.include_html = include_html
 
-    """An exception log handler that emails log entries to site admins.
-
-    If the request is passed as the first argument to the log record,
-    request data will be provided in the
-    """
     def emit(self, record):
-        import traceback
-        from django.conf import settings
-        from django.views.debug import ExceptionReporter
-
         try:
             request = record.request
             subject = '%s (%s IP): %s' % (
@@ -49,24 +50,45 @@ class AdminEmailHandler(logging.Handler):
                 (request.META.get('REMOTE_ADDR') in settings.INTERNAL_IPS and 'internal' or 'EXTERNAL'),
                 record.msg
             )
-            request_repr = repr(request)
+            filter = get_exception_reporter_filter(request)
+            request_repr = filter.get_request_repr(request)
         except:
             subject = '%s: %s' % (
                 record.levelname,
-                record.msg
+                record.getMessage()
             )
-
             request = None
-            request_repr = "Request repr() unavailable"
+            request_repr = "Request repr() unavailable."
 
         if record.exc_info:
             exc_info = record.exc_info
             stack_trace = '\n'.join(traceback.format_exception(*record.exc_info))
         else:
-            exc_info = (None, record.msg, None)
+            exc_info = (None, record.getMessage(), None)
             stack_trace = 'No stack trace available'
 
         message = "%s\n\n%s" % (stack_trace, request_repr)
         reporter = ExceptionReporter(request, is_email=True, *exc_info)
         html_message = self.include_html and reporter.get_traceback_html() or None
         mail.mail_admins(subject, message, fail_silently=True, html_message=html_message)
+
+
+class CallbackFilter(logging.Filter):
+    """
+    A logging filter that checks the return value of a given callable (which
+    takes the record-to-be-logged as its only parameter) to decide whether to
+    log a record.
+
+    """
+    def __init__(self, callback):
+        self.callback = callback
+
+    def filter(self, record):
+        if self.callback(record):
+            return 1
+        return 0
+
+
+class RequireDebugFalse(logging.Filter):
+    def filter(self, record):
+        return not settings.DEBUG

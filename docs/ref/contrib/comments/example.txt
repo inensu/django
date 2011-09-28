@@ -103,13 +103,16 @@ But let's look at a simple example::
   <!-- A context variable called form is created with the necessary hidden
   fields, timestamps and security hashes -->
   <table>
-  <form action="{% comment_form_target %}" method="post">
-    {{ form }}
-    <tr>
-      <td></td>
-      <td><input type="submit" name="preview" class="submit-post" value="Preview"></td>
-    </tr>
-  </form>
+    <form action="{% comment_form_target %}" method="post">
+      {% csrf_token %}
+      {{ form }}
+      <tr>
+        <td colspan="2">
+          <input type="submit" name="submit" value="Post">
+          <input type="submit" name="preview" value="Preview">
+        </td>
+      </tr>
+    </form>
   </table>
 
 Flagging
@@ -140,7 +143,7 @@ enable it in your project's ``urls.py``:
 
 .. code-block:: python
 
-  from django.conf.urls.defaults import *
+  from django.conf.urls import patterns, url, include
   from django.contrib.comments.feeds import LatestCommentFeed
 
   urlpatterns = patterns('',
@@ -158,7 +161,7 @@ syndication feed view:
 
 .. code-block:: python
 
-    from django.conf.urls.defaults import *
+    from django.conf.urls import patterns
     from django.contrib.comments.feeds import LatestCommentFeed
 
     feeds = {

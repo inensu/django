@@ -1,7 +1,6 @@
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.test import TestCase
 
 
 def validate_answer_to_universe(value):
@@ -15,6 +14,7 @@ class ModelToValidate(models.Model):
     parent = models.ForeignKey('self', blank=True, null=True, limit_choices_to={'number': 10})
     email = models.EmailField(blank=True)
     url = models.URLField(blank=True)
+    url_verify = models.URLField(blank=True, verify_exists=True)
     f_with_custom_validator = models.IntegerField(blank=True, null=True, validators=[validate_answer_to_universe])
 
     def clean(self):
@@ -78,3 +78,15 @@ class FlexibleDatePost(models.Model):
     slug = models.CharField(max_length=50, unique_for_year='posted', blank=True)
     subtitle = models.CharField(max_length=50, unique_for_month='posted', blank=True)
     posted = models.DateField(blank=True, null=True)
+
+class UniqueErrorsModel(models.Model):
+    name = models.CharField(max_length=100, unique=True, error_messages={'unique': u'Custom unique name message.'})
+    no = models.IntegerField(unique=True, error_messages={'unique': u'Custom unique number message.'})
+
+class GenericIPAddressTestModel(models.Model):
+    generic_ip = models.GenericIPAddressField(blank=True, null=True, unique=True)
+    v4_ip = models.GenericIPAddressField(blank=True, null=True, protocol="ipv4")
+    v6_ip = models.GenericIPAddressField(blank=True, null=True, protocol="ipv6")
+
+class GenericIPAddrUnpackUniqueTest(models.Model):
+    generic_v4unpack_ip = models.GenericIPAddressField(blank=True, unique=True, unpack_ipv4=True)

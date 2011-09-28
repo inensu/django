@@ -283,7 +283,7 @@ class ManagementUtility(object):
         and formatted as potential completion suggestions.
         """
         # Don't complete if user hasn't sourced bash_completion file.
-        if not os.environ.has_key('DJANGO_AUTO_COMPLETE'):
+        if 'DJANGO_AUTO_COMPLETE' not in os.environ:
             return
 
         cwords = os.environ['COMP_WORDS'].split()[1:]
@@ -411,12 +411,16 @@ def setup_environ(settings_mod, original_settings_path=None):
     if original_settings_path:
         os.environ['DJANGO_SETTINGS_MODULE'] = original_settings_path
     else:
-        os.environ['DJANGO_SETTINGS_MODULE'] = '%s.%s' % (project_name, settings_name)
+        # If DJANGO_SETTINGS_MODULE is already set, use it.
+        os.environ['DJANGO_SETTINGS_MODULE'] = os.environ.get(
+            'DJANGO_SETTINGS_MODULE',
+            '%s.%s' % (project_name, settings_name)
+        )
 
     # Import the project module. We add the parent directory to PYTHONPATH to
     # avoid some of the path errors new users can have.
     sys.path.append(os.path.join(project_directory, os.pardir))
-    project_module = import_module(project_name)
+    import_module(project_name)
     sys.path.pop()
 
     return project_directory

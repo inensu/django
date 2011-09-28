@@ -6,9 +6,8 @@ Requires cx_Oracle: http://cx-oracle.sourceforge.net/
 
 
 import datetime
+import decimal
 import sys
-import time
-from decimal import Decimal
 
 
 def _setup_environment(environ):
@@ -70,6 +69,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     needs_datetime_string_cast = False
     interprets_empty_strings_as_nulls = True
     uses_savepoints = True
+    has_select_for_update = True
+    has_select_for_update_nowait = True
     can_return_id_from_insert = True
     allow_sliced_subqueries = False
     supports_subqueries_in_group_by = False
@@ -77,6 +78,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_bitwise_or = False
     can_defer_constraint_checks = True
     ignores_nulls_in_unique_constraints = False
+    has_bulk_insert = True
 
 class DatabaseOperations(BaseDatabaseOperations):
     compiler_module = "django.db.backends.oracle.compiler"
@@ -174,12 +176,6 @@ WHEN (new.%(col_name)s IS NULL)
         # classes to normalize values from the database (the to_python
         # method is used for validation and isn't what we want here).
         elif isinstance(value, Database.Timestamp):
-            # In Python 2.3, the cx_Oracle driver returns its own
-            # Timestamp object that we must convert to a datetime class.
-            if not isinstance(value, datetime.datetime):
-                value = datetime.datetime(value.year, value.month,
-                        value.day, value.hour, value.minute, value.second,
-                        value.fsecond)
             if field and field.get_internal_type() == 'DateTimeField':
                 pass
             elif field and field.get_internal_type() == 'DateField':
@@ -207,6 +203,11 @@ WHEN (new.%(col_name)s IS NULL)
             return "DBMS_LOB.SUBSTR(%s)"
         else:
             return "%s"
+
+    def last_executed_query(self, cursor, sql, params):
+        # http://cx-oracle.sourceforge.net/html/cursor.html#Cursor.statement
+        # The DB API definition does not define this attribute.
+        return cursor.statement
 
     def last_insert_id(self, cursor, table_name, pk_name):
         sq_name = self._get_sequence_name(table_name)
@@ -258,9 +259,8 @@ WHEN (new.%(col_name)s IS NULL)
     def regex_lookup(self, lookup_type):
         # If regex_lookup is called before it's been initialized, then create
         # a cursor to initialize it and recur.
-        from django.db import connection
-        connection.cursor()
-        return connection.ops.regex_lookup(lookup_type)
+        self.connection.cursor()
+        return self.connection.ops.regex_lookup(lookup_type)
 
     def return_insert_id(self):
         return "RETURNING %s INTO %%s", (InsertIdVar(),)
@@ -341,7 +341,7 @@ WHEN (new.%(col_name)s IS NULL)
             return None
 
         if isinstance(value, basestring):
-            return datetime.datetime(*(time.strptime(value, '%H:%M:%S')[:6]))
+            return datetime.datetime.strptime(value, '%H:%M:%S')
 
         # Oracle doesn't support tz-aware datetimes
         if value.tzinfo is not None:
@@ -372,6 +372,10 @@ WHEN (new.%(col_name)s IS NULL)
     def _get_trigger_name(self, table):
         name_length = self.max_name_length() - 3
         return '%s_TR' % util.truncate_name(table, name_length).upper()
+
+    def bulk_insert_sql(self, fields, num_values):
+        items_sql = "SELECT %s FROM DUAL" % ", ".join(["%s"] * len(fields))
+        return " UNION ALL ".join([items_sql] * num_values)
 
 
 class _UninitializedOperatorsDescriptor(object):
@@ -428,6 +432,14 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         self.creation = DatabaseCreation(self)
         self.introspection = DatabaseIntrospection(self)
         self.validation = BaseDatabaseValidation(self)
+
+    def check_constraints(self, table_names=None):
+        """
+        To check constraints, we set constraints to immediate. Then, when, we're done we must ensure they
+        are returned to deferred.
+        """
+        self.cursor().execute('SET CONSTRAINTS ALL IMMEDIATE')
+        self.cursor().execute('SET CONSTRAINTS ALL DEFERRED')
 
     def _valid_connection(self):
         return self.connection is not None
@@ -731,7 +743,7 @@ def _rowfactory(row, cursor):
                     # This will normally be an integer from a sequence,
                     # but it could be a decimal value.
                     if '.' in value:
-                        value = Decimal(value)
+                        value = decimal.Decimal(value)
                     else:
                         value = int(value)
                 else:
@@ -744,12 +756,12 @@ def _rowfactory(row, cursor):
                 if scale == 0:
                     value = int(value)
                 else:
-                    value = Decimal(value)
+                    value = decimal.Decimal(value)
             elif '.' in value:
                 # No type information. This normally comes from a
                 # mathematical expression in the SELECT list. Guess int
                 # or Decimal based on whether it has a decimal point.
-                value = Decimal(value)
+                value = decimal.Decimal(value)
             else:
                 value = int(value)
         elif desc[1] in (Database.STRING, Database.FIXED_CHAR,

@@ -3,14 +3,14 @@ Helper functions for creating Form classes from Django models
 and database field objects.
 """
 
+from django.core.exceptions import ValidationError, NON_FIELD_ERRORS, FieldError
+from django.core.validators import EMPTY_VALUES
+
 from django.utils.encoding import smart_unicode, force_unicode
 from django.utils.datastructures import SortedDict
 from django.utils.text import get_text_list, capfirst
 from django.utils.translation import ugettext_lazy as _, ugettext
 
-from django.core.exceptions import ValidationError, NON_FIELD_ERRORS, \
-                                   FieldError
-from django.core.validators import EMPTY_VALUES
 from util import ErrorList
 from forms import BaseForm, get_declared_fields
 from fields import Field, ChoiceField
@@ -117,7 +117,7 @@ def model_to_dict(instance, fields=None, exclude=None):
         if exclude and f.name in exclude:
             continue
         if isinstance(f, ManyToManyField):
-            # If the object doesn't have a primry key yet, just use an empty
+            # If the object doesn't have a primary key yet, just use an empty
             # list for its m2m fields. Calling f.value_from_object will raise
             # an exception.
             if instance.pk is None:
@@ -143,7 +143,7 @@ def fields_for_model(model, fields=None, exclude=None, widgets=None, formfield_c
     field_list = []
     ignored = []
     opts = model._meta
-    for f in opts.fields + opts.many_to_many:
+    for f in sorted(opts.fields + opts.many_to_many):
         if not f.editable:
             continue
         if fields is not None and not f.name in fields:
@@ -288,7 +288,7 @@ class BaseModelForm(BaseForm):
             # Exclude empty fields that are not required by the form, if the
             # underlying model field is required. This keeps the model field
             # from raising a required error. Note: don't exclude the field from
-            # validaton if the model field allows blanks. If it does, the blank
+            # validation if the model field allows blanks. If it does, the blank
             # value may be included in a unique check, so cannot be excluded
             # from validation.
             else:
@@ -368,7 +368,7 @@ class ModelForm(BaseModelForm):
     __metaclass__ = ModelFormMetaclass
 
 def modelform_factory(model, form=ModelForm, fields=None, exclude=None,
-                       formfield_callback=None):
+                      formfield_callback=None,  widgets=None):
     # Create the inner Meta class. FIXME: ideally, we should be able to
     # construct a ModelForm without creating and passing in a temporary
     # inner class.
@@ -379,6 +379,8 @@ def modelform_factory(model, form=ModelForm, fields=None, exclude=None,
         attrs['fields'] = fields
     if exclude is not None:
         attrs['exclude'] = exclude
+    if widgets is not None:
+        attrs['widgets'] = widgets
 
     # If parent form class already has an inner Meta, the Meta we're
     # creating needs to inherit from the parent's inner meta.
@@ -396,7 +398,12 @@ def modelform_factory(model, form=ModelForm, fields=None, exclude=None,
         'formfield_callback': formfield_callback
     }
 
-    return ModelFormMetaclass(class_name, (form,), form_class_attrs)
+    form_metaclass = ModelFormMetaclass
+
+    if issubclass(form, BaseModelForm) and hasattr(form, '__metaclass__'):
+        form_metaclass = form.__metaclass__
+
+    return form_metaclass(class_name, (form,), form_class_attrs)
 
 
 # ModelFormSets ##############################################################
@@ -701,11 +708,10 @@ class BaseInlineFormSet(BaseModelFormSet):
         setattr(form.instance, self.fk.get_attname(), self.instance.pk)
         return form
 
-    #@classmethod
+    @classmethod
     def get_default_prefix(cls):
         from django.db.models.fields.related import RelatedObject
         return RelatedObject(cls.fk.rel.to, cls.model, cls.fk).get_accessor_name().replace('+','')
-    get_default_prefix = classmethod(get_default_prefix)
 
     def save_new(self, form, commit=True):
         # Use commit=False so we can assign the parent key afterwards, then

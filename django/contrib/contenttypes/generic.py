@@ -52,9 +52,9 @@ class GenericForeignKey(object):
         # using this model
         ContentType = get_model("contenttypes", "contenttype")
         if obj:
-             return ContentType.objects.db_manager(obj._state.db).get_for_model(obj)
+            return ContentType.objects.db_manager(obj._state.db).get_for_model(obj)
         elif id:
-             return ContentType.objects.db_manager(using).get_for_id(id)
+            return ContentType.objects.db_manager(using).get_for_id(id)
         else:
             # This should never happen. I love comments like this, don't you?
             raise Exception("Impossible arguments to GFK.get_content_type!")
@@ -219,7 +219,6 @@ class ReverseGenericRelatedObjectsDescriptor(object):
             model = rel_model,
             instance = instance,
             symmetrical = (self.field.rel.symmetrical and instance.__class__ == rel_model),
-            join_table = qn(self.field.m2m_db_table()),
             source_col_name = qn(self.field.m2m_column_name()),
             target_col_name = qn(self.field.m2m_reverse_name()),
             content_type = ContentType.objects.db_manager(instance._state.db).get_for_model(instance),
@@ -246,7 +245,7 @@ def create_generic_related_manager(superclass):
 
     class GenericRelatedObjectManager(superclass):
         def __init__(self, model=None, core_filters=None, instance=None, symmetrical=None,
-                     join_table=None, source_col_name=None, target_col_name=None, content_type=None,
+                     source_col_name=None, target_col_name=None, content_type=None,
                      content_type_field_name=None, object_id_field_name=None):
 
             super(GenericRelatedObjectManager, self).__init__()
@@ -255,8 +254,6 @@ def create_generic_related_manager(superclass):
             self.content_type = content_type
             self.symmetrical = symmetrical
             self.instance = instance
-            self.join_table = join_table
-            self.join_table = model._meta.db_table
             self.source_col_name = source_col_name
             self.target_col_name = target_col_name
             self.content_type_field_name = content_type_field_name
@@ -339,13 +336,12 @@ class BaseGenericInlineFormSet(BaseModelFormSet):
             prefix=prefix
         )
 
-    #@classmethod
+    @classmethod
     def get_default_prefix(cls):
         opts = cls.model._meta
         return '-'.join((opts.app_label, opts.object_name.lower(),
                         cls.ct_field.name, cls.ct_fk_field.name,
         ))
-    get_default_prefix = classmethod(get_default_prefix)
 
     def save_new(self, form, commit=True):
         # Avoid a circular import.
@@ -363,7 +359,7 @@ def generic_inlineformset_factory(model, form=ModelForm,
                                   fields=None, exclude=None,
                                   extra=3, can_order=False, can_delete=True,
                                   max_num=None,
-                                  formfield_callback=lambda f: f.formfield()):
+                                  formfield_callback=None):
     """
     Returns an ``GenericInlineFormSet`` for the given kwargs.
 
@@ -397,7 +393,7 @@ class GenericInlineModelAdmin(InlineModelAdmin):
     ct_fk_field = "object_id"
     formset = BaseGenericInlineFormSet
 
-    def get_formset(self, request, obj=None):
+    def get_formset(self, request, obj=None, **kwargs):
         if self.declared_fieldsets:
             fields = flatten_fieldsets(self.declared_fieldsets)
         else:
@@ -407,6 +403,10 @@ class GenericInlineModelAdmin(InlineModelAdmin):
         else:
             exclude = list(self.exclude)
         exclude.extend(self.get_readonly_fields(request, obj))
+        if self.exclude is None and hasattr(self.form, '_meta') and self.form._meta.exclude:
+            # Take the custom ModelForm's Meta.exclude into account only if the
+            # GenericInlineModelAdmin doesn't define its own.
+            exclude.extend(self.form._meta.exclude)
         exclude = exclude or None
         defaults = {
             "ct_field": self.ct_field,
@@ -421,6 +421,7 @@ class GenericInlineModelAdmin(InlineModelAdmin):
             "max_num": self.max_num,
             "exclude": exclude
         }
+        defaults.update(kwargs)
         return generic_inlineformset_factory(self.model, **defaults)
 
 class GenericStackedInline(GenericInlineModelAdmin):

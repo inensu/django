@@ -1,5 +1,4 @@
 import datetime
-import random
 
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
@@ -119,6 +118,13 @@ class YearArchiveViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(list(res.context['date_list']), [datetime.datetime(year, 1, 1)])
 
+    def test_year_view_paginated(self):
+        res = self.client.get('/dates/books/2006/paginated/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__year=2006)))
+        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__year=2006)))
+        self.assertTemplateUsed(res, 'generic_views/book_archive_year.html')
+
     def test_year_view_invalid_pattern(self):
         res = self.client.get('/dates/books/no_year/')
         self.assertEqual(res.status_code, 404)
@@ -190,6 +196,13 @@ class MonthArchiveViewTests(TestCase):
         self.assertEqual(res.context['next_month'], future)
         self.assertEqual(res.context['previous_month'], datetime.date(2006, 5, 1))
 
+    def test_month_view_paginated(self):
+        res = self.client.get('/dates/books/2008/oct/paginated/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10)))
+        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10)))
+        self.assertTemplateUsed(res, 'generic_views/book_archive_month.html')
+
     def test_custom_month_format(self):
         res = self.client.get('/dates/books/2008/10/')
         self.assertEqual(res.status_code, 200)
@@ -250,6 +263,15 @@ class WeekArchiveViewTests(TestCase):
         res = self.client.get('/dates/books/%s/week/1/allow_future/' % future.year)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(list(res.context['book_list']), [b])
+
+    def test_week_view_paginated(self):
+        week_start = datetime.date(2008, 9, 28)
+        week_end = week_start + datetime.timedelta(days=7)
+        res = self.client.get('/dates/books/2008/week/39/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__gte=week_start, pubdate__lt=week_end)))
+        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__gte=week_start, pubdate__lt=week_end)))
+        self.assertTemplateUsed(res, 'generic_views/book_archive_week.html')
 
     def test_week_view_invalid_pattern(self):
         res = self.client.get('/dates/books/2007/week/no_week/')
@@ -317,7 +339,7 @@ class DayArchiveViewTests(TestCase):
         self.assertEqual(list(res.context['book_list']), [b])
         self.assertEqual(res.context['day'], future)
 
-        # allow_future but not allow_empty, next/prev amust be valid
+        # allow_future but not allow_empty, next/prev must be valid
         self.assertEqual(res.context['next_day'], None)
         self.assertEqual(res.context['previous_day'], datetime.date(2008, 10, 1))
 
@@ -326,6 +348,13 @@ class DayArchiveViewTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.context['next_day'], future)
         self.assertEqual(res.context['previous_day'], datetime.date(2006, 5, 1))
+
+    def test_day_view_paginated(self):
+        res = self.client.get('/dates/books/2008/oct/1/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(list(res.context['book_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10, pubdate__day=1)))
+        self.assertEqual(list(res.context['object_list']), list(Book.objects.filter(pubdate__year=2008, pubdate__month=10, pubdate__day=1)))
+        self.assertTemplateUsed(res, 'generic_views/book_archive_day.html')
 
     def test_next_prev_context(self):
         res = self.client.get('/dates/books/2008/oct/01/')
